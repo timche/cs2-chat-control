@@ -16,7 +16,6 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Cvars;
@@ -35,11 +34,14 @@ public class ChatControlConfig : BasePluginConfig
     [JsonPropertyName("ChatPrefix")]
     public string ChatPrefix { get; set; } = "/";
 
-    [JsonPropertyName("EnableMapCommand")]
-    public bool EnableMapCommand { get; set; } = true;
+    // The name the map command is registered under, i.e. "map" gives /map and
+    // css_map. Rename it to sit next to a plugin that owns css_map, or set it to
+    // an empty string to switch the command off. Same for the rcon command.
+    [JsonPropertyName("MapCommandName")]
+    public string MapCommandName { get; set; } = "map";
 
-    [JsonPropertyName("EnableRconCommand")]
-    public bool EnableRconCommand { get; set; } = true;
+    [JsonPropertyName("RconCommandName")]
+    public string RconCommandName { get; set; } = "rcon";
 
     // When non-empty, map changes only accept these entries: map names are compared
     // after the de_ prefix has been applied, workshop IDs as the bare number.
@@ -53,25 +55,25 @@ public class ChatControlConfig : BasePluginConfig
     {
         ["aim"] = new()
         {
-            "mp_freezetime 1",
-            "mp_maxrounds 30",
-            "mp_buy_anywhere 1",
-            "mp_startmoney 16000",
-            "mp_respawn_immunitytime 0",
+            "mp_maxrounds 9999",
+            "mp_freezetime 0",
+            "mp_free_armor 2",
+            "mp_death_drop_gun 1",
+            "mp_match_restart_delay 2",
+            "mp_limitteams 0",
             "mp_warmup_end",
+            "mp_restartgame 1",
         },
         ["aimpistol"] = new()
         {
-            "mp_freezetime 1",
-            "mp_maxrounds 30",
-            "mp_buy_anywhere 1",
-            "mp_startmoney 800",
-            "mp_ct_default_primary \"\"",
-            "mp_t_default_primary \"\"",
-            "mp_ct_default_secondary weapon_usp_silencer",
-            "mp_t_default_secondary weapon_glock",
-            "mp_respawn_immunitytime 0",
+            "mp_maxrounds 9999",
+            "mp_freezetime 0",
+            "mp_free_armor 1",
+            "mp_death_drop_gun 1",
+            "mp_match_restart_delay 2",
+            "mp_limitteams 0",
             "mp_warmup_end",
+            "mp_restartgame 1",
         },
     };
 }
@@ -79,7 +81,7 @@ public class ChatControlConfig : BasePluginConfig
 public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 {
     public override string ModuleName => "ChatControl";
-    public override string ModuleVersion => "1.1.0";
+    public override string ModuleVersion => "1.2.0";
     public override string ModuleDescription => "Chat-driven server control: /map, /rcon and config-defined presets";
 
     // Must be a public field: CounterStrikeSharp discovers convars via GetFields.
@@ -95,14 +97,25 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
     private const string BuiltInTriggerSlash = "/";
     private const string BuiltInTriggerBang = "!";
 
+    // Fallbacks for an unusable configured name, and reserved preset names.
+    private const string DefaultMapCommandName = "map";
+    private const string DefaultRconCommandName = "rcon";
+
+    // An empty active name means the command is not registered at all.
+    private const string DisabledCommandName = "";
+
     private static readonly Regex WorkshopIdInUrlPattern = new(@"id=(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex WorkshopIdPattern = new(@"^\d+$", RegexOptions.Compiled);
     private static readonly Regex SafeMapNamePattern = new(@"^[a-zA-Z0-9_\-]+$", RegexOptions.Compiled);
-    private static readonly Regex SafePresetNamePattern = new(@"^[a-z0-9_]+$", RegexOptions.Compiled);
+    private static readonly Regex SafeCommandNamePattern = new(@"^[a-z0-9_]+$", RegexOptions.Compiled);
 
-    private readonly List<(string PresetName, string CommandName, CommandInfo.CommandCallback Callback)> registeredPresetCommands = new();
+    // Every command this plugin registers — map, rcon and presets alike — so a
+    // config re-parse can take them all back down before registering again.
+    private readonly List<(string CommandWord, string ConsoleCommandName, CommandInfo.CommandCallback Callback)> registeredCommands = new();
 
     private string activeChatPrefix = BuiltInTriggerSlash;
+    private string activeMapCommandName = DefaultMapCommandName;
+    private string activeRconCommandName = DefaultRconCommandName;
 
     public override void Load(bool hotReload)
     {
@@ -114,19 +127,47 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
         Config = config;
 
         activeChatPrefix = ValidateChatPrefix(config.ChatPrefix);
+        activeMapCommandName = ValidateCommandName(config.MapCommandName, "MapCommandName", DefaultMapCommandName);
+        activeRconCommandName = ValidateCommandName(config.RconCommandName, "RconCommandName", DefaultRconCommandName);
 
-        if (!Config.EnableMapCommand)
+        if (activeRconCommandName.Length > 0 && activeRconCommandName == activeMapCommandName)
         {
-            Logger.LogInformation("map command disabled by config.");
+            Logger.LogWarning("Ignoring RconCommandName '{Name}': the map command already uses that name. Falling back to '{Fallback}'.", activeRconCommandName, DefaultRconCommandName);
+            activeRconCommandName = DefaultRconCommandName;
+
+            // Only reachable when MapCommandName is itself "rcon", which leaves the
+            // fallback taken as well and no free name to register under.
+            if (activeRconCommandName == activeMapCommandName)
+            {
+                Logger.LogWarning("Disabling the rcon command: MapCommandName is '{Name}'.", activeMapCommandName);
+                activeRconCommandName = DisabledCommandName;
+            }
         }
 
-        if (!Config.EnableRconCommand)
-        {
-            Logger.LogInformation("rcon command disabled by config.");
-        }
-
-        UnregisterPresetCommands();
+        UnregisterCommands();
+        RegisterMapAndRconCommands();
         RegisterPresetCommands();
+    }
+
+    // An empty name switches the command off; anything unusable falls back to the
+    // default name rather than leaving the server without the command.
+    private string ValidateCommandName(string configuredName, string configKey, string defaultName)
+    {
+        var commandName = NormaliseCommandName(configuredName);
+
+        if (commandName.Length == 0)
+        {
+            Logger.LogInformation("{Default} command disabled by config.", defaultName);
+            return DisabledCommandName;
+        }
+
+        if (!SafeCommandNamePattern.IsMatch(commandName))
+        {
+            Logger.LogWarning("Ignoring {Key} '{Name}': names may only contain a-z, 0-9 and underscores. Falling back to '{Fallback}'.", configKey, configuredName, defaultName);
+            return defaultName;
+        }
+
+        return commandName;
     }
 
     private string ValidateChatPrefix(string configuredPrefix)
@@ -205,54 +246,31 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
             return HookResult.Continue;
         }
 
-        switch (commandWord)
+        // commandWord is never empty here, so a disabled command's empty name cannot
+        // be matched by accident.
+        if (commandWord == activeMapCommandName)
         {
-            case "map":
-                HandleMapCommand(player, string.Join(' ', tokens.Skip(1)));
-                break;
-
-            case "rcon":
-                // Not re-joined from the split tokens: the raw remainder keeps the
-                // caller's original spacing and quoting intact.
-                HandleRconCommand(player, text.Substring(tokens[0].Length).Trim());
-                break;
-
-            default:
-                if (registeredPresetCommands.Any(preset => preset.PresetName == commandWord))
-                {
-                    HandlePresetCommand(player, commandWord);
-                }
-
-                break;
+            HandleMapCommand(player, string.Join(' ', tokens.Skip(1)));
+        }
+        else if (commandWord == activeRconCommandName)
+        {
+            // Not re-joined from the split tokens: the raw remainder keeps the
+            // caller's original spacing and quoting intact.
+            HandleRconCommand(player, text.Substring(tokens[0].Length).Trim());
+        }
+        else if (registeredCommands.Any(registered => registered.CommandWord == commandWord))
+        {
+            // Only presets are left: a disabled map or rcon command is not in the
+            // list either, and neither name can be taken by a preset.
+            HandlePresetCommand(player, commandWord);
         }
 
         return HookResult.Continue;
     }
 
-    [ConsoleCommand("css_map", "Change the map")]
-    public void OnMapCommand(CCSPlayerController? player, CommandInfo command)
-    {
-        HandleMapCommand(player, command.GetArg(1).Trim());
-    }
-
-    [ConsoleCommand("css_rcon", "Run a server command")]
-    public void OnRconCommand(CCSPlayerController? player, CommandInfo command)
-    {
-        // ArgString excludes the command name and is otherwise unmodified.
-        HandleRconCommand(player, command.ArgString);
-    }
-
     private void HandleMapCommand(CCSPlayerController? player, string mapArgument)
     {
-        // Silent: CounterStrikeSharp dispatches a shared command name to every plugin
-        // that registered it, so when this is disabled to coexist with MatchZy a reply
-        // here would only be noise next to MatchZy's own response.
-        if (!Config.EnableMapCommand)
-        {
-            return;
-        }
-
-        if (!CanUseCommand(player, "css_map", "@css/map"))
+        if (!CanUseCommand(player, $"css_{activeMapCommandName}", "@css/map"))
         {
             ReplyToPlayer(player, "You do not have permission to use this command.");
             return;
@@ -262,7 +280,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 
         if (string.IsNullOrEmpty(requestedMap))
         {
-            ReplyToPlayer(player, $"Usage: {activeChatPrefix}map <name | workshop id | workshop URL>");
+            ReplyToPlayer(player, $"Usage: {activeChatPrefix}{activeMapCommandName} <name | workshop id | workshop URL>");
             return;
         }
 
@@ -342,13 +360,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
     // is the gate, not a command blocklist.
     private void HandleRconCommand(CCSPlayerController? player, string serverCommand)
     {
-        // Silent for the same reason as HandleMapCommand.
-        if (!Config.EnableRconCommand)
-        {
-            return;
-        }
-
-        if (!CanUseCommand(player, "css_rcon", "@css/rcon"))
+        if (!CanUseCommand(player, $"css_{activeRconCommandName}", "@css/rcon"))
         {
             ReplyToPlayer(player, "You do not have permission to use this command.");
             return;
@@ -356,7 +368,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 
         if (string.IsNullOrWhiteSpace(serverCommand))
         {
-            ReplyToPlayer(player, $"Usage: {activeChatPrefix}rcon <command>");
+            ReplyToPlayer(player, $"Usage: {activeChatPrefix}{activeRconCommandName} <command>");
             return;
         }
 
@@ -394,7 +406,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
     {
         foreach (var presetEntry in Config.Presets)
         {
-            if (NormalisePresetName(presetEntry.Key) == presetName)
+            if (NormaliseCommandName(presetEntry.Key) == presetName)
             {
                 return presetEntry.Value;
             }
@@ -403,21 +415,35 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
         return null;
     }
 
+    private void RegisterMapAndRconCommands()
+    {
+        if (activeMapCommandName.Length > 0)
+        {
+            RegisterCommand(activeMapCommandName, "Change the map", (callingPlayer, command) => HandleMapCommand(callingPlayer, command.GetArg(1).Trim()));
+        }
+
+        if (activeRconCommandName.Length > 0)
+        {
+            // ArgString excludes the command name and is otherwise unmodified.
+            RegisterCommand(activeRconCommandName, "Run a server command", (callingPlayer, command) => HandleRconCommand(callingPlayer, command.ArgString));
+        }
+    }
+
     private void RegisterPresetCommands()
     {
         foreach (var presetEntry in Config.Presets)
         {
-            var presetName = NormalisePresetName(presetEntry.Key);
+            var presetName = NormaliseCommandName(presetEntry.Key);
 
-            if (presetName is "map" or "rcon")
+            if (!SafeCommandNamePattern.IsMatch(presetName))
             {
-                Logger.LogWarning("Ignoring preset '{Preset}': the name is reserved by ChatControl.", presetEntry.Key);
+                Logger.LogWarning("Ignoring preset '{Preset}': names may only contain a-z, 0-9 and underscores.", presetEntry.Key);
                 continue;
             }
 
-            if (!SafePresetNamePattern.IsMatch(presetName))
+            if (IsReservedCommandName(presetName))
             {
-                Logger.LogWarning("Ignoring preset '{Preset}': names may only contain a-z, 0-9 and underscores.", presetEntry.Key);
+                Logger.LogWarning("Ignoring preset '{Preset}': the name is reserved by ChatControl.", presetEntry.Key);
                 continue;
             }
 
@@ -427,41 +453,56 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
                 continue;
             }
 
-            if (registeredPresetCommands.Any(registered => registered.PresetName == presetName))
+            if (registeredCommands.Any(registered => registered.CommandWord == presetName))
             {
                 Logger.LogWarning("Ignoring preset '{Preset}': '{Name}' is already registered.", presetEntry.Key, presetName);
                 continue;
             }
 
-            var commandName = $"css_{presetName}";
-            CommandInfo.CommandCallback callback = (callingPlayer, command) => HandlePresetCommand(callingPlayer, presetName);
-
-            AddCommand(commandName, $"ChatControl preset '{presetName}'", callback);
-            registeredPresetCommands.Add((presetName, commandName, callback));
+            RegisterCommand(presetName, $"ChatControl preset '{presetName}'", (callingPlayer, command) => HandlePresetCommand(callingPlayer, presetName));
         }
     }
 
-    // Config re-parses would otherwise register every preset a second time.
-    private void UnregisterPresetCommands()
+    // "map" and "rcon" stay reserved even after a rename, so a config can be moved
+    // to a server that runs the commands under their default names without its
+    // presets suddenly colliding.
+    private bool IsReservedCommandName(string commandName)
     {
-        foreach (var registeredPreset in registeredPresetCommands)
-        {
-            RemoveCommand(registeredPreset.CommandName, registeredPreset.Callback);
-        }
-
-        registeredPresetCommands.Clear();
+        return commandName == DefaultMapCommandName
+            || commandName == DefaultRconCommandName
+            || commandName == activeMapCommandName
+            || commandName == activeRconCommandName;
     }
 
-    private static string NormalisePresetName(string configuredName)
+    private void RegisterCommand(string commandWord, string description, CommandInfo.CommandCallback callback)
     {
-        var presetName = configuredName.Trim().ToLowerInvariant();
+        var consoleCommandName = $"css_{commandWord}";
 
-        if (presetName.StartsWith('.'))
+        AddCommand(consoleCommandName, description, callback);
+        registeredCommands.Add((commandWord, consoleCommandName, callback));
+    }
+
+    // Config re-parses would otherwise register every command a second time.
+    private void UnregisterCommands()
+    {
+        foreach (var registeredCommand in registeredCommands)
         {
-            presetName = presetName.Substring(1);
+            RemoveCommand(registeredCommand.ConsoleCommandName, registeredCommand.Callback);
         }
 
-        return presetName;
+        registeredCommands.Clear();
+    }
+
+    private static string NormaliseCommandName(string configuredName)
+    {
+        var commandName = configuredName.Trim().ToLowerInvariant();
+
+        if (commandName.StartsWith('.'))
+        {
+            commandName = commandName.Substring(1);
+        }
+
+        return commandName;
     }
 
     private bool CanUseCommand(CCSPlayerController? player, string commandName, string permissionFlag)
