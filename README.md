@@ -45,7 +45,7 @@ From the server console or RCON, use the `css_` name (`css_map de_dust2`).
 
 | Chat | Console | Permission | Description |
 | --- | --- | --- | --- |
-| `.map <name>` | `css_map <name>` | `@css/map` | Change level. A name without an underscore gets the `de_` prefix, so `.map dust2` means `de_dust2`. |
+| `.map <name>` | `css_map <name>` | `@css/map` | Change level. The name is passed to `changelevel` as given, so community maps like `aim_redline_fps` work. A name without an underscore gets the `de_` prefix, so `.map dust2` means `de_dust2`. |
 | `.map <workshop id>` | `css_map <workshop id>` | `@css/map` | Load a workshop map by numeric ID (`host_workshop_map`). |
 | `.map <workshop URL>` | `css_map <workshop URL>` | `@css/map` | Same, with the ID parsed out of a `steamcommunity.com` URL. |
 | `.rcon <command>` | `css_rcon <command>` | `@css/rcon` | Run any server command. Unfiltered — access control is the only gate. |
@@ -163,7 +163,7 @@ value:
   are matched case-insensitively *after* the `de_` prefix is applied; workshop
   maps are matched against the bare numeric ID, so add the ID string to the list
   to allow one. The list shown is a plausible retakes rotation. Leave it empty
-  to allow any map the server considers valid.
+  to accept any map name.
 - `Presets` — preset name to server commands, executed in order. `aim` and
   `aimpistol` ship as defaults; edit them, or delete them and add your own. A
   leading `.` on the key is stripped, and keys are lowercased.

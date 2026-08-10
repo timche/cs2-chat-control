@@ -83,7 +83,7 @@ public class ChatControlConfig : BasePluginConfig
 public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 {
     public override string ModuleName => "ChatControl";
-    public override string ModuleVersion => "1.3.0";
+    public override string ModuleVersion => "1.3.1";
     public override string ModuleDescription => "Chat-driven server control: .map, .rcon and config-defined presets";
 
     // Must be a public field: CounterStrikeSharp discovers convars via GetFields.
@@ -331,7 +331,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
     private void ChangeToNamedMap(CCSPlayerController? player, string requestedMapName)
     {
         // MatchZy convention: a bare name without an underscore gets the de_ prefix,
-        // so `/map dust2` means de_dust2.
+        // so `.map dust2` means de_dust2.
         var mapName = requestedMapName.Contains('_') ? requestedMapName : $"de_{requestedMapName}";
 
         if (!IsMapAllowed(mapName))
@@ -340,11 +340,14 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
             return;
         }
 
-        // The name is interpolated into a console command, so reject anything that
-        // could carry quotes or semicolons before asking the engine about it.
-        if (!SafeMapNamePattern.IsMatch(mapName) || !Server.IsMapValid(mapName))
+        // Only a character check, deliberately not Server.IsMapValid: that returns
+        // false for maps the engine has not registered, which is most workshop and
+        // community maps (aim_*, surf_*, …). The engine reports an unknown map
+        // itself. The name is interpolated into a console command, so a semicolon
+        // or quote here would append a second command.
+        if (!SafeMapNamePattern.IsMatch(mapName))
         {
-            ReplyToPlayer(player, "Invalid map name!");
+            ReplyToPlayer(player, "Invalid map name! Letters, digits, _ and - only.");
             return;
         }
 
