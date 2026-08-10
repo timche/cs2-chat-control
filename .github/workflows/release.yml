@@ -15,10 +15,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           # CounterStrikeSharp.API 1.0.371 ships a net10.0 assembly only.
           dotnet-version: 10.0.x
@@ -54,7 +54,7 @@ jobs:
           echo "ZIP_NAME=ChatControl-${version}.zip" >> "$GITHUB_ENV"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ChatControl
           path: package/ChatControl
