@@ -15,6 +15,19 @@ API, not copied code.
 - Metamod:Source
 - CounterStrikeSharp >= 1.0.371
 
+## Install
+
+1. Download `ChatControl-<version>.zip` from the
+   [latest release](https://github.com/timche/cs2-chat-control/releases/latest).
+2. Extract it into `game/csgo/addons/counterstrikesharp/plugins/` — the zip
+   contains a `ChatControl/` folder with everything needed.
+3. Restart the server (or run `css_plugins load ChatControl` in the server
+   console).
+
+On first load the plugin generates its config file; see
+[Configuration](#configuration) to set up map allowlists and presets, then
+apply changes with `css_plugins reload ChatControl`.
+
 ## Commands
 
 Every command works with three chat triggers — `.map`, `!map`, `/map`. The `.`
@@ -109,7 +122,7 @@ Both sections above are **examples to adapt**, not recommended values:
 Presets are re-registered whenever the config is parsed, so editing the file and
 reloading the plugin picks up changes without duplicating commands.
 
-## Build
+## Building from source
 
 No local .NET install needed — build inside the SDK image:
 
@@ -122,18 +135,8 @@ docker run --rm -u 1000:1000 -e DOTNET_CLI_HOME=/tmp -e XDG_DATA_HOME=/tmp \
 CounterStrikeSharp.API 1.0.371 ships a `net10.0` assembly, so the plugin targets
 `net10.0` and needs the .NET 10 SDK image to build.
 
-## Install
-
-Download `ChatControl-<version>.zip` from the
-[latest release](https://github.com/timche/cs2-chat-control/releases/latest) and
-extract it into `game/csgo/addons/counterstrikesharp/plugins/` — the zip
-contains a `ChatControl/` folder with everything needed.
-
-Alternatively, build from source (above) and copy **only** `ChatControl.dll`
-and `ChatControl.deps.json` from `ChatControl/dist` into
+To install a source build, copy **only** `ChatControl.dll` and
+`ChatControl.deps.json` from `ChatControl/dist` into
 `game/csgo/addons/counterstrikesharp/plugins/ChatControl/`. Do not deploy
 `CounterStrikeSharp.API.dll` — the server provides it, and a second copy breaks
 plugin loading. The build is configured not to emit it.
-
-Restart the server (or `css_plugins load ChatControl`), then edit the generated
-config and `css_plugins reload ChatControl`.
