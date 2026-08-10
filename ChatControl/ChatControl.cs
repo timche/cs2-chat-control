@@ -1,14 +1,14 @@
 // ChatControl — chat-driven server control for CounterStrikeSharp (CS2).
 //
 // Provides:
-//   .map <name | workshop id | workshop URL>  — change the level from chat
-//   .rcon <command>                           — run a server command from chat
-//   .<preset>                                 — run a config-defined batch of commands
+//   /map <name | workshop id | workshop URL>  — change the level from chat
+//   /rcon <command>                           — run a server command from chat
+//   /<preset>                                 — run a config-defined batch of commands
 //
 // Plus a "everyone is admin" convar (chatcontrol_everyone_is_admin) that bypasses
 // the permission checks on this plugin's commands, for private/passworded servers.
 //
-// The behaviour of .map, .rcon and the everyone-is-admin gating is modelled on
+// The behaviour of map, rcon and the everyone-is-admin gating is modelled on
 // MatchZy (MIT, https://github.com/shobhit-pathak/MatchZy), but this is a
 // reimplementation against the CounterStrikeSharp API, not copied code.
 
@@ -28,21 +28,59 @@ namespace ChatControl;
 
 public class ChatControlConfig : BasePluginConfig
 {
-    // When non-empty, .map only accepts these entries: map names are compared
+    // The extra chat trigger this plugin's own listener answers to. A bare "/" or
+    // "!" means "CounterStrikeSharp's built-in triggers only": those already
+    // dispatch /command and !command to the registered css_ commands, so the
+    // listener adds nothing there. Anything else (".", "$", …) is an added trigger.
+    [JsonPropertyName("ChatPrefix")]
+    public string ChatPrefix { get; set; } = "/";
+
+    [JsonPropertyName("EnableMapCommand")]
+    public bool EnableMapCommand { get; set; } = true;
+
+    [JsonPropertyName("EnableRconCommand")]
+    public bool EnableRconCommand { get; set; } = true;
+
+    // When non-empty, map changes only accept these entries: map names are compared
     // after the de_ prefix has been applied, workshop IDs as the bare number.
     [JsonPropertyName("AllowedMaps")]
     public List<string> AllowedMaps { get; set; } = new();
 
-    // Preset name -> server commands, executed in order.
+    // Preset name -> server commands, executed in order. These are ready-to-use
+    // defaults that land in the generated config; edit or remove them there.
     [JsonPropertyName("Presets")]
-    public Dictionary<string, List<string>> Presets { get; set; } = new();
+    public Dictionary<string, List<string>> Presets { get; set; } = new()
+    {
+        ["aim"] = new()
+        {
+            "mp_freezetime 1",
+            "mp_maxrounds 30",
+            "mp_buy_anywhere 1",
+            "mp_startmoney 16000",
+            "mp_respawn_immunitytime 0",
+            "mp_warmup_end",
+        },
+        ["aimpistol"] = new()
+        {
+            "mp_freezetime 1",
+            "mp_maxrounds 30",
+            "mp_buy_anywhere 1",
+            "mp_startmoney 800",
+            "mp_ct_default_primary \"\"",
+            "mp_t_default_primary \"\"",
+            "mp_ct_default_secondary weapon_usp_silencer",
+            "mp_t_default_secondary weapon_glock",
+            "mp_respawn_immunitytime 0",
+            "mp_warmup_end",
+        },
+    };
 }
 
 public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 {
     public override string ModuleName => "ChatControl";
-    public override string ModuleVersion => "1.0.0";
-    public override string ModuleDescription => "Chat-driven server control: .map, .rcon and config-defined presets";
+    public override string ModuleVersion => "1.1.0";
+    public override string ModuleDescription => "Chat-driven server control: /map, /rcon and config-defined presets";
 
     // Must be a public field: CounterStrikeSharp discovers convars via GetFields.
     // Only the server console / RCON can change it.
@@ -52,12 +90,19 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 
     private static readonly string Prefix = $"[{ChatColors.Green}ChatControl{ChatColors.Default}]";
 
+    // CounterStrikeSharp's own chat triggers. As a ChatPrefix either one means
+    // "built-in triggers only" and leaves this plugin's chat listener inactive.
+    private const string BuiltInTriggerSlash = "/";
+    private const string BuiltInTriggerBang = "!";
+
     private static readonly Regex WorkshopIdInUrlPattern = new(@"id=(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex WorkshopIdPattern = new(@"^\d+$", RegexOptions.Compiled);
     private static readonly Regex SafeMapNamePattern = new(@"^[a-zA-Z0-9_\-]+$", RegexOptions.Compiled);
     private static readonly Regex SafePresetNamePattern = new(@"^[a-z0-9_]+$", RegexOptions.Compiled);
 
     private readonly List<(string PresetName, string CommandName, CommandInfo.CommandCallback Callback)> registeredPresetCommands = new();
+
+    private string activeChatPrefix = BuiltInTriggerSlash;
 
     public override void Load(bool hotReload)
     {
@@ -68,17 +113,71 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
     {
         Config = config;
 
+        activeChatPrefix = ValidateChatPrefix(config.ChatPrefix);
+
+        if (!Config.EnableMapCommand)
+        {
+            Logger.LogInformation("map command disabled by config.");
+        }
+
+        if (!Config.EnableRconCommand)
+        {
+            Logger.LogInformation("rcon command disabled by config.");
+        }
+
         UnregisterPresetCommands();
         RegisterPresetCommands();
     }
 
-    // Chat listener. CounterStrikeSharp already handles the ! and / triggers for
-    // registered commands; this adds the . trigger MatchZy users expect.
+    private string ValidateChatPrefix(string configuredPrefix)
+    {
+        var chatPrefix = configuredPrefix.Trim();
+
+        // Kept as-is: on its own, either character selects the built-in triggers and
+        // switches this plugin's listener off, which is the default behaviour.
+        if (chatPrefix is BuiltInTriggerSlash or BuiltInTriggerBang)
+        {
+            return chatPrefix;
+        }
+
+        if (chatPrefix.Length == 0)
+        {
+            Logger.LogWarning("Ignoring ChatPrefix '{Prefix}': it is empty. Falling back to '{Fallback}'.", configuredPrefix, BuiltInTriggerSlash);
+            return BuiltInTriggerSlash;
+        }
+
+        if (chatPrefix.Any(char.IsWhiteSpace))
+        {
+            Logger.LogWarning("Ignoring ChatPrefix '{Prefix}': it contains whitespace. Falling back to '{Fallback}'.", configuredPrefix, BuiltInTriggerSlash);
+            return BuiltInTriggerSlash;
+        }
+
+        // A longer string containing '!' or '/' ("//", "!x") is neither a built-in
+        // trigger nor a usable listener prefix: CounterStrikeSharp would dispatch the
+        // command from the leading character and the listener would run it again.
+        if (chatPrefix.Contains('!') || chatPrefix.Contains('/'))
+        {
+            Logger.LogWarning("Ignoring ChatPrefix '{Prefix}': '!' and '/' may only be used on their own. Falling back to '{Fallback}'.", configuredPrefix, BuiltInTriggerSlash);
+            return BuiltInTriggerSlash;
+        }
+
+        return chatPrefix;
+    }
+
+    // Chat listener for the configured prefix, e.g. the . trigger MatchZy users
+    // expect. CounterStrikeSharp already dispatches / and ! to registered commands,
+    // so on those the listener stays out of the way: "!" messages still reach this
+    // event (they are broadcast), and matching them would run the command twice.
     private HookResult OnPlayerChat(EventPlayerChat chatEvent, GameEventInfo eventInfo)
     {
+        if (activeChatPrefix is BuiltInTriggerSlash or BuiltInTriggerBang)
+        {
+            return HookResult.Continue;
+        }
+
         var text = chatEvent.Text.Trim();
 
-        if (text.Length <= 1 || !text.StartsWith('.'))
+        if (text.Length <= activeChatPrefix.Length || !text.StartsWith(activeChatPrefix, StringComparison.Ordinal))
         {
             return HookResult.Continue;
         }
@@ -90,7 +189,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
             return HookResult.Continue;
         }
 
-        var commandWord = tokens[0].Substring(1).ToLowerInvariant();
+        var commandWord = tokens[0].Substring(activeChatPrefix.Length).ToLowerInvariant();
 
         if (commandWord.Length == 0)
         {
@@ -145,6 +244,14 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 
     private void HandleMapCommand(CCSPlayerController? player, string mapArgument)
     {
+        // Silent: CounterStrikeSharp dispatches a shared command name to every plugin
+        // that registered it, so when this is disabled to coexist with MatchZy a reply
+        // here would only be noise next to MatchZy's own response.
+        if (!Config.EnableMapCommand)
+        {
+            return;
+        }
+
         if (!CanUseCommand(player, "css_map", "@css/map"))
         {
             ReplyToPlayer(player, "You do not have permission to use this command.");
@@ -155,7 +262,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 
         if (string.IsNullOrEmpty(requestedMap))
         {
-            ReplyToPlayer(player, "Usage: .map <name | workshop id | workshop URL>");
+            ReplyToPlayer(player, $"Usage: {activeChatPrefix}map <name | workshop id | workshop URL>");
             return;
         }
 
@@ -201,7 +308,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
     private void ChangeToNamedMap(CCSPlayerController? player, string requestedMapName)
     {
         // MatchZy convention: a bare name without an underscore gets the de_ prefix,
-        // so `.map dust2` means de_dust2.
+        // so `/map dust2` means de_dust2.
         var mapName = requestedMapName.Contains('_') ? requestedMapName : $"de_{requestedMapName}";
 
         if (!IsMapAllowed(mapName))
@@ -235,6 +342,12 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
     // is the gate, not a command blocklist.
     private void HandleRconCommand(CCSPlayerController? player, string serverCommand)
     {
+        // Silent for the same reason as HandleMapCommand.
+        if (!Config.EnableRconCommand)
+        {
+            return;
+        }
+
         if (!CanUseCommand(player, "css_rcon", "@css/rcon"))
         {
             ReplyToPlayer(player, "You do not have permission to use this command.");
@@ -243,7 +356,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 
         if (string.IsNullOrWhiteSpace(serverCommand))
         {
-            ReplyToPlayer(player, "Usage: .rcon <command>");
+            ReplyToPlayer(player, $"Usage: {activeChatPrefix}rcon <command>");
             return;
         }
 
