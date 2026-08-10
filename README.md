@@ -29,32 +29,37 @@ apply changes with `css_plugins reload ChatControl`.
 
 ## Commands
 
-Every command works with two chat triggers — `/map` (silent, the message is
-hidden from chat) and `!map` (public). Both are CounterStrikeSharp's built-in
-triggers for every registered command and are always available. From the server
-console or RCON, use the `css_` name (`css_map de_dust2`).
+Every command answers to three chat triggers out of the box — `.map`, `!map`
+and `/map`:
 
-`ChatPrefix` in the config can *add* a third, plugin-handled trigger, such as
-`.` for MatchZy-style dot commands or `$`. The default (`/`) deliberately adds
-none, so ChatControl does not clash with plugins that own the `.` namespace —
-MatchZy above all. See [Configuration](#configuration).
+- `.map` comes from this plugin's own chat listener and is what `ChatPrefix`
+  (default `.`) controls. Set it to `$` for `$map`, or to `/` or `!` to switch
+  the listener off entirely and rely on the built-in triggers alone.
+- `!map` (public) and `/map` (silent, the message is hidden from chat) are
+  CounterStrikeSharp's built-in triggers, configured server-wide in
+  `addons/counterstrikesharp/configs/core.json`. They apply to every registered
+  command of every plugin, so they are always available and not ChatControl's to
+  change.
+
+From the server console or RCON, use the `css_` name (`css_map de_dust2`).
 
 | Chat | Console | Permission | Description |
 | --- | --- | --- | --- |
-| `/map <name>` | `css_map <name>` | `@css/map` | Change level. A name without an underscore gets the `de_` prefix, so `/map dust2` means `de_dust2`. |
-| `/map <workshop id>` | `css_map <workshop id>` | `@css/map` | Load a workshop map by numeric ID (`host_workshop_map`). |
-| `/map <workshop URL>` | `css_map <workshop URL>` | `@css/map` | Same, with the ID parsed out of a `steamcommunity.com` URL. |
-| `/rcon <command>` | `css_rcon <command>` | `@css/rcon` | Run any server command. Unfiltered — access control is the only gate. |
-| `/<preset>` | `css_<preset>` | `@css/config` | Run the commands configured under that preset name. |
+| `.map <name>` | `css_map <name>` | `@css/map` | Change level. A name without an underscore gets the `de_` prefix, so `.map dust2` means `de_dust2`. |
+| `.map <workshop id>` | `css_map <workshop id>` | `@css/map` | Load a workshop map by numeric ID (`host_workshop_map`). |
+| `.map <workshop URL>` | `css_map <workshop URL>` | `@css/map` | Same, with the ID parsed out of a `steamcommunity.com` URL. |
+| `.rcon <command>` | `css_rcon <command>` | `@css/rcon` | Run any server command. Unfiltered — access control is the only gate. |
+| `.<preset>` | `css_<preset>` | `@css/config` | Run the commands configured under that preset name. |
 
 The table shows the default names. `map` and `rcon` are themselves configurable
 through `MapCommandName` and `RconCommandName`, so `"MapCommandName": "wmap"`
-turns the first three rows into `/wmap`, `!wmap` and `css_wmap`; an empty name
+turns the first three rows into `.wmap`, `!wmap` and `css_wmap`; an empty name
 switches the command off entirely.
 
 Preset commands are registered from the config, so a preset named `aim` gives
-you `/aim`, `!aim` and `css_aim`. The names `map` and `rcon` are reserved (along
-with the configured command names, if renamed), and preset names may only
+you `.aim`, `!aim`, `/aim` and `css_aim`. The names `map` and `rcon` are
+reserved (along with the configured command names, if renamed), and preset
+names may only
 contain `a-z`, `0-9` and `_`.
 
 ## Permissions
@@ -69,7 +74,7 @@ console and RCON always pass.
 A convar (default `false`) that bypasses the permission checks on this plugin's
 commands. It can only be changed from the server console or RCON, not from chat.
 
-> **Warning:** `chatcontrol_everyone_is_admin 1` combined with `/rcon` hands the
+> **Warning:** `chatcontrol_everyone_is_admin 1` combined with `.rcon` hands the
 > server console to every connected player. Only enable it on private or
 > passworded servers.
 
@@ -86,7 +91,7 @@ preset.
 
 ```json
 {
-  "ChatPrefix": "/",
+  "ChatPrefix": ".",
   "MapCommandName": "map",
   "RconCommandName": "rcon",
   "AllowedMaps": [
@@ -131,17 +136,22 @@ preset.
 The `AllowedMaps` list above is an **example to adapt**, not a recommended
 value:
 
-- `ChatPrefix` — an extra chat trigger handled by this plugin, on top of the
-  built-in `/` and `!`. The default `"/"` (or `"!"`) means *built-in triggers
-  only*: no extra trigger is added, which keeps ChatControl clear of other
-  plugins' chat commands — MatchZy's `.ready` and `.map`, for instance. Set it to
-  `"."` for MatchZy-style dot commands, or to any other symbol such as `"$"`,
-  which gives you `$map`, `$rcon` and `$<preset>`. Values that mix `!` or `/`
-  with other characters (`"//"`, `"!x"`), contain whitespace, or are empty log a
-  warning and fall back to `"/"`. `/` and `!` keep working whatever you set here.
+- `ChatPrefix` — the extra chat trigger this plugin handles, on top of the
+  built-in `!` and `/`. Default `"."`, giving MatchZy-style `.map`, `.rcon` and
+  `.<preset>`. Any other symbol works too — `"$"` gives `$map`, `$rcon` and
+  `$<preset>`. Setting it to `"/"` or `"!"` means *built-in triggers only*: the
+  plugin's listener is switched off and just `!map` / `/map` remain, which is how
+  you keep ChatControl clear of a plugin that owns the `.` namespace, MatchZy
+  above all. Values that mix `!` or `/` with other characters (`"//"`, `"!x"`),
+  contain whitespace, or are empty log a warning and fall back to `"."`. `!` and
+  `/` keep working whatever you set here.
+
+  > If your server's `core.json` adds extra `PublicChatTrigger` entries, do not
+  > duplicate one here: CounterStrikeSharp would dispatch the command and this
+  > plugin's listener would run it a second time.
 - `MapCommandName` / `RconCommandName` — the names these two commands are
   registered under, defaults `"map"` and `"rcon"`. Renaming moves every trigger
-  at once, so `"MapCommandName": "wmap"` gives `/wmap`, `!wmap` and `css_wmap` —
+  at once, so `"MapCommandName": "wmap"` gives `.wmap`, `!wmap` and `css_wmap` —
   which is how you keep ChatControl's map command on a server where another
   plugin already owns `css_map`, see
   [Running alongside MatchZy](#running-alongside-matchzy). An empty string
@@ -149,7 +159,7 @@ value:
   Names may only contain `a-z`, `0-9` and `_`; anything else logs a warning and
   falls back to the default name, as does an `RconCommandName` that collides with
   the map command's.
-- `AllowedMaps` — when non-empty, `/map` accepts only these entries. Map names
+- `AllowedMaps` — when non-empty, `.map` accepts only these entries. Map names
   are matched case-insensitively *after* the `de_` prefix is applied; workshop
   maps are matched against the bare numeric ID, so add the ID string to the list
   to allow one. The list shown is a plausible retakes rotation. Leave it empty
@@ -166,24 +176,25 @@ picks up changes without duplicating commands.
 
 MatchZy provides `map` and `rcon` too, and CounterStrikeSharp dispatches a shared
 command name (`css_map`) to *every* plugin that registered it. Running both
-plugins stock therefore means `/map` and `!map` each execute twice — once per
+plugins stock therefore means `!map` and `/map` each execute twice — once per
 plugin. For `rcon` that is not just noise: the server command runs twice, which
-is genuinely harmful for anything that isn't idempotent.
+is genuinely harmful for anything that isn't idempotent. On top of that, the
+default `ChatPrefix` puts ChatControl's own listener on `.map` and `.rcon`,
+which MatchZy also answers.
 
 The fix is to rename rather than to disable. ChatControl's map command
 understands workshop URLs, which MatchZy's does not, so it is worth keeping:
 
 - `"MapCommandName": "wmap"` — ChatControl registers `css_wmap`, MatchZy keeps
-  `css_map`. `/map` and `!map` stay MatchZy's; `/wmap <workshop URL>` is
+  `css_map`. `.map`, `!map` and `/map` stay MatchZy's; `.wmap <workshop URL>` is
   ChatControl's, with no shared name and nothing running twice.
 - `"RconCommandName": ""` — disables ChatControl's rcon entirely. MatchZy's
   `.rcon` already does the same job, and two rcon commands under one name would
   send every server command twice.
-
-The default `ChatPrefix` leaves MatchZy's `.` namespace untouched, so preset
-names only collide if you set `ChatPrefix` to `"."`; if you do and a preset
-shares a name with a MatchZy dot-command — a preset named `ready`, say — pick
-another prefix such as `$`.
+- `"ChatPrefix": "$"` — optional, and only needed if one of your presets shares
+  a name with a MatchZy dot-command (a preset called `ready`, say). Renaming the
+  preset does the same job. Setting the prefix to `"/"` switches ChatControl's
+  listener off altogether, leaving `!aim` and `/aim` for presets.
 
 ## Building from source
 
