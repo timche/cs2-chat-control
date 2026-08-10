@@ -124,14 +124,16 @@ CounterStrikeSharp.API 1.0.371 ships a `net10.0` assembly, so the plugin targets
 
 ## Install
 
-Create `game/csgo/addons/counterstrikesharp/plugins/ChatControl/` on the server
-and copy **only** these two files from `ChatControl/dist`:
+Download `ChatControl-<version>.zip` from the
+[latest release](https://github.com/timche/cs2-chat-control/releases/latest) and
+extract it into `game/csgo/addons/counterstrikesharp/plugins/` — the zip
+contains a `ChatControl/` folder with everything needed.
 
-- `ChatControl.dll`
-- `ChatControl.deps.json`
-
-Do not deploy `CounterStrikeSharp.API.dll` — the server provides it, and a
-second copy breaks plugin loading. The build is configured not to emit it.
+Alternatively, build from source (above) and copy **only** `ChatControl.dll`
+and `ChatControl.deps.json` from `ChatControl/dist` into
+`game/csgo/addons/counterstrikesharp/plugins/ChatControl/`. Do not deploy
+`CounterStrikeSharp.API.dll` — the server provides it, and a second copy breaks
+plugin loading. The build is configured not to emit it.
 
 Restart the server (or `css_plugins load ChatControl`), then edit the generated
 config and `css_plugins reload ChatControl`.
