@@ -47,9 +47,15 @@ MatchZy above all. See [Configuration](#configuration).
 | `/rcon <command>` | `css_rcon <command>` | `@css/rcon` | Run any server command. Unfiltered — access control is the only gate. |
 | `/<preset>` | `css_<preset>` | `@css/config` | Run the commands configured under that preset name. |
 
+The table shows the default names. `map` and `rcon` are themselves configurable
+through `MapCommandName` and `RconCommandName`, so `"MapCommandName": "wmap"`
+turns the first three rows into `/wmap`, `!wmap` and `css_wmap`; an empty name
+switches the command off entirely.
+
 Preset commands are registered from the config, so a preset named `aim` gives
-you `/aim`, `!aim` and `css_aim`. The names `map` and `rcon` are reserved, and
-preset names may only contain `a-z`, `0-9` and `_`.
+you `/aim`, `!aim` and `css_aim`. The names `map` and `rcon` are reserved (along
+with the configured command names, if renamed), and preset names may only
+contain `a-z`, `0-9` and `_`.
 
 ## Permissions
 
@@ -81,8 +87,8 @@ preset.
 ```json
 {
   "ChatPrefix": "/",
-  "EnableMapCommand": true,
-  "EnableRconCommand": true,
+  "MapCommandName": "map",
+  "RconCommandName": "rcon",
   "AllowedMaps": [
     "de_ancient",
     "de_anubis",
@@ -98,24 +104,24 @@ preset.
   ],
   "Presets": {
     "aim": [
-      "mp_freezetime 1",
-      "mp_maxrounds 30",
-      "mp_buy_anywhere 1",
-      "mp_startmoney 16000",
-      "mp_respawn_immunitytime 0",
-      "mp_warmup_end"
+      "mp_maxrounds 9999",
+      "mp_freezetime 0",
+      "mp_free_armor 2",
+      "mp_death_drop_gun 1",
+      "mp_match_restart_delay 2",
+      "mp_limitteams 0",
+      "mp_warmup_end",
+      "mp_restartgame 1"
     ],
     "aimpistol": [
-      "mp_freezetime 1",
-      "mp_maxrounds 30",
-      "mp_buy_anywhere 1",
-      "mp_startmoney 800",
-      "mp_ct_default_primary \"\"",
-      "mp_t_default_primary \"\"",
-      "mp_ct_default_secondary weapon_usp_silencer",
-      "mp_t_default_secondary weapon_glock",
-      "mp_respawn_immunitytime 0",
-      "mp_warmup_end"
+      "mp_maxrounds 9999",
+      "mp_freezetime 0",
+      "mp_free_armor 1",
+      "mp_death_drop_gun 1",
+      "mp_match_restart_delay 2",
+      "mp_limitteams 0",
+      "mp_warmup_end",
+      "mp_restartgame 1"
     ]
   },
   "ConfigVersion": 1
@@ -133,9 +139,16 @@ value:
   which gives you `$map`, `$rcon` and `$<preset>`. Values that mix `!` or `/`
   with other characters (`"//"`, `"!x"`), contain whitespace, or are empty log a
   warning and fall back to `"/"`. `/` and `!` keep working whatever you set here.
-- `EnableMapCommand` / `EnableRconCommand` — set either to `false` to disable
-  that command silently, with no reply to the player. See
-  [Running alongside MatchZy](#running-alongside-matchzy).
+- `MapCommandName` / `RconCommandName` — the names these two commands are
+  registered under, defaults `"map"` and `"rcon"`. Renaming moves every trigger
+  at once, so `"MapCommandName": "wmap"` gives `/wmap`, `!wmap` and `css_wmap` —
+  which is how you keep ChatControl's map command on a server where another
+  plugin already owns `css_map`, see
+  [Running alongside MatchZy](#running-alongside-matchzy). An empty string
+  disables the command: it is not registered at all, so nothing answers it.
+  Names may only contain `a-z`, `0-9` and `_`; anything else logs a warning and
+  falls back to the default name, as does an `RconCommandName` that collides with
+  the map command's.
 - `AllowedMaps` — when non-empty, `/map` accepts only these entries. Map names
   are matched case-insensitively *after* the `de_` prefix is applied; workshop
   maps are matched against the bare numeric ID, so add the ID string to the list
@@ -145,8 +158,9 @@ value:
   `aimpistol` ship as defaults; edit them, or delete them and add your own. A
   leading `.` on the key is stripped, and keys are lowercased.
 
-Presets are re-registered whenever the config is parsed, so editing the file and
-reloading the plugin picks up changes without duplicating commands.
+All commands — map, rcon and presets — are registered from the config and
+re-registered whenever it is parsed, so editing the file and reloading the plugin
+picks up changes without duplicating commands.
 
 ## Running alongside MatchZy
 
@@ -156,11 +170,20 @@ plugins stock therefore means `/map` and `!map` each execute twice — once per
 plugin. For `rcon` that is not just noise: the server command runs twice, which
 is genuinely harmful for anything that isn't idempotent.
 
-On a MatchZy server, set `EnableMapCommand` and `EnableRconCommand` to `false`
-and use ChatControl for presets only. The default `ChatPrefix` leaves MatchZy's
-`.` namespace untouched, so preset names only collide if you set `ChatPrefix` to
-`"."`; if you do and a preset shares a name with a MatchZy dot-command — a preset
-named `ready`, say — pick another prefix such as `$`.
+The fix is to rename rather than to disable. ChatControl's map command
+understands workshop URLs, which MatchZy's does not, so it is worth keeping:
+
+- `"MapCommandName": "wmap"` — ChatControl registers `css_wmap`, MatchZy keeps
+  `css_map`. `/map` and `!map` stay MatchZy's; `/wmap <workshop URL>` is
+  ChatControl's, with no shared name and nothing running twice.
+- `"RconCommandName": ""` — disables ChatControl's rcon entirely. MatchZy's
+  `.rcon` already does the same job, and two rcon commands under one name would
+  send every server command twice.
+
+The default `ChatPrefix` leaves MatchZy's `.` namespace untouched, so preset
+names only collide if you set `ChatPrefix` to `"."`; if you do and a preset
+shares a name with a MatchZy dot-command — a preset named `ready`, say — pick
+another prefix such as `$`.
 
 ## Building from source
 
