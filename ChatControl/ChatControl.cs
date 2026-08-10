@@ -1,9 +1,11 @@
 // ChatControl — chat-driven server control for CounterStrikeSharp (CS2).
 //
 // Provides:
-//   /map <name | workshop id | workshop URL>  — change the level from chat
-//   /rcon <command>                           — run a server command from chat
-//   /<preset>                                 — run a config-defined batch of commands
+//   .map <name | workshop id | workshop URL>  — change the level from chat
+//   .rcon <command>                           — run a server command from chat
+//   .<preset>                                 — run a config-defined batch of commands
+//
+// Each also works as !command and /command, CounterStrikeSharp's own triggers.
 //
 // Plus a "everyone is admin" convar (chatcontrol_everyone_is_admin) that bypasses
 // the permission checks on this plugin's commands, for private/passworded servers.
@@ -27,12 +29,12 @@ namespace ChatControl;
 
 public class ChatControlConfig : BasePluginConfig
 {
-    // The extra chat trigger this plugin's own listener answers to. A bare "/" or
-    // "!" means "CounterStrikeSharp's built-in triggers only": those already
-    // dispatch /command and !command to the registered css_ commands, so the
-    // listener adds nothing there. Anything else (".", "$", …) is an added trigger.
+    // The extra chat trigger this plugin's own listener answers to, on top of
+    // CounterStrikeSharp's built-in "!" and "/". A bare "/" or "!" means "built-in
+    // triggers only": those already dispatch /command and !command to the
+    // registered css_ commands, so the listener adds nothing there.
     [JsonPropertyName("ChatPrefix")]
-    public string ChatPrefix { get; set; } = "/";
+    public string ChatPrefix { get; set; } = ".";
 
     // The name the map command is registered under, i.e. "map" gives /map and
     // css_map. Rename it to sit next to a plugin that owns css_map, or set it to
@@ -81,8 +83,8 @@ public class ChatControlConfig : BasePluginConfig
 public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 {
     public override string ModuleName => "ChatControl";
-    public override string ModuleVersion => "1.2.0";
-    public override string ModuleDescription => "Chat-driven server control: /map, /rcon and config-defined presets";
+    public override string ModuleVersion => "1.3.0";
+    public override string ModuleDescription => "Chat-driven server control: .map, .rcon and config-defined presets";
 
     // Must be a public field: CounterStrikeSharp discovers convars via GetFields.
     // Only the server console / RCON can change it.
@@ -96,6 +98,9 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
     // "built-in triggers only" and leaves this plugin's chat listener inactive.
     private const string BuiltInTriggerSlash = "/";
     private const string BuiltInTriggerBang = "!";
+
+    // Fallback for an unusable configured prefix.
+    private const string DefaultChatPrefix = ".";
 
     // Fallbacks for an unusable configured name, and reserved preset names.
     private const string DefaultMapCommandName = "map";
@@ -113,7 +118,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
     // config re-parse can take them all back down before registering again.
     private readonly List<(string CommandWord, string ConsoleCommandName, CommandInfo.CommandCallback Callback)> registeredCommands = new();
 
-    private string activeChatPrefix = BuiltInTriggerSlash;
+    private string activeChatPrefix = DefaultChatPrefix;
     private string activeMapCommandName = DefaultMapCommandName;
     private string activeRconCommandName = DefaultRconCommandName;
 
@@ -175,7 +180,7 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
         var chatPrefix = configuredPrefix.Trim();
 
         // Kept as-is: on its own, either character selects the built-in triggers and
-        // switches this plugin's listener off, which is the default behaviour.
+        // switches this plugin's listener off.
         if (chatPrefix is BuiltInTriggerSlash or BuiltInTriggerBang)
         {
             return chatPrefix;
@@ -183,14 +188,14 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
 
         if (chatPrefix.Length == 0)
         {
-            Logger.LogWarning("Ignoring ChatPrefix '{Prefix}': it is empty. Falling back to '{Fallback}'.", configuredPrefix, BuiltInTriggerSlash);
-            return BuiltInTriggerSlash;
+            Logger.LogWarning("Ignoring ChatPrefix '{Prefix}': it is empty. Falling back to '{Fallback}'.", configuredPrefix, DefaultChatPrefix);
+            return DefaultChatPrefix;
         }
 
         if (chatPrefix.Any(char.IsWhiteSpace))
         {
-            Logger.LogWarning("Ignoring ChatPrefix '{Prefix}': it contains whitespace. Falling back to '{Fallback}'.", configuredPrefix, BuiltInTriggerSlash);
-            return BuiltInTriggerSlash;
+            Logger.LogWarning("Ignoring ChatPrefix '{Prefix}': it contains whitespace. Falling back to '{Fallback}'.", configuredPrefix, DefaultChatPrefix);
+            return DefaultChatPrefix;
         }
 
         // A longer string containing '!' or '/' ("//", "!x") is neither a built-in
@@ -198,8 +203,8 @@ public class ChatControl : BasePlugin, IPluginConfig<ChatControlConfig>
         // command from the leading character and the listener would run it again.
         if (chatPrefix.Contains('!') || chatPrefix.Contains('/'))
         {
-            Logger.LogWarning("Ignoring ChatPrefix '{Prefix}': '!' and '/' may only be used on their own. Falling back to '{Fallback}'.", configuredPrefix, BuiltInTriggerSlash);
-            return BuiltInTriggerSlash;
+            Logger.LogWarning("Ignoring ChatPrefix '{Prefix}': '!' and '/' may only be used on their own. Falling back to '{Fallback}'.", configuredPrefix, DefaultChatPrefix);
+            return DefaultChatPrefix;
         }
 
         return chatPrefix;
